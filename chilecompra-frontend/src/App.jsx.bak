@@ -1,0 +1,708 @@
+import { useState, useMemo, useEffect, useCallback } from "react";
+
+const BASE = "http://localhost:3001/api/licitaciones";
+
+const ESTADOS = {
+  "5":  { label: "Publicada",   bg: "#E6F1FB", color: "#185FA5" },
+  "6":  { label: "Cerrada",     bg: "#F1EFE8", color: "#5F5E5A" },
+  "7":  { label: "Desierta",    bg: "#FCEBEB", color: "#A32D2D" },
+  "8":  { label: "Adjudicada",  bg: "#EAF3DE", color: "#3B6D11" },
+  "18": { label: "Revocada",    bg: "#FAEEDA", color: "#854F0B" },
+  "19": { label: "Suspendida",  bg: "#FAEEDA", color: "#854F0B" },
+};
+
+const TIPOS = {
+  "L1": "Licitación Pública < 100 UTM",
+  "LE": "Licitación Pública 100–1.000 UTM",
+  "LP": "Licitación Pública > 1.000 UTM",
+  "LS": "Servicios personales especializados",
+  "A1": "Licitación Privada (anterior sin oferentes)",
+  "B1": "Licitación Privada (otras causales)",
+  "CO": "Licitación Privada 100–1.000 UTM",
+  "B2": "Licitación Privada > 1.000 UTM",
+  "D1": "Trato Directo — Proveedor Único",
+  "E2": "Licitación Privada < 100 UTM",
+  "C1": "Compra Directa (Orden de Compra)",
+  "C2": "Trato Directo Cotización",
+  "F2": "Trato Directo Cotización F2",
+  "F3": "Compra Directa OC F3",
+  "G1": "Compra Directa OC G1",
+  "G2": "Directo Cotización G2",
+  "R1": "Orden de Compra < 3 UTM",
+  "CA": "OC sin resolución",
+  "SE": "Sin emisión automática",
+  "AG": "Compra Ágil",
+};
+
+// Convierte YYYY-MM-DD → ddmmyyyy (formato API)
+function toApiDate(s) {
+  if (!s) return "";
+  const [y, m, d] = s.split("-");
+  return `${d}${m}${y}`;
+}
+
+// Hoy en formato ddmmyyyy
+function todayApiDate() {
+  const n = new Date();
+  const d = String(n.getDate()).padStart(2, "0");
+  const m = String(n.getMonth() + 1).padStart(2, "0");
+  const y = n.getFullYear();
+  return `${d}${m}${y}`;
+}
+
+// Fecha local YYYY-MM-DD
+function todayLocal() {
+  const n = new Date();
+  return n.toISOString().split("T")[0];
+}
+
+function fmtDate(iso) {
+  if (!iso) return "—";
+  return iso.split("T")[0];
+}
+
+function fmtMonto(m, moneda) {
+  if (!m || m === 0) return null;
+  return `${moneda || "CLP"} ${Number(m).toLocaleString("es-CL")}`;
+}
+
+function Badge({ codigo }) {
+  const e = ESTADOS[String(codigo)];
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 500, padding: "2px 8px", borderRadius: 99,
+      background: e?.bg || "#F1EFE8", color: e?.color || "#5F5E5A",
+      whiteSpace: "nowrap", display: "inline-block", lineHeight: "16px",
+    }}>
+      {e?.label || `Estado ${codigo}`}
+    </span>
+  );
+}
+
+function Field({ label, value, mono }) {
+  if (!value) return null;
+  return (
+    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, padding: "7px 0", borderBottom: "0.5px solid var(--color-border-tertiary)" }}>
+      <span style={{ fontSize: 11, color: "var(--color-text-secondary)", flexShrink: 0 }}>{label}</span>
+      <span style={{ fontSize: 11, textAlign: "right", fontFamily: mono ? "var(--font-mono)" : undefined }}>{value}</span>
+
+      {showRef&&(
+        <div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={()=>setShowRef(false)}>
+          <div style={{background:"var(--color-background-primary)",borderRadius:12,padding:"24px",maxWidth:680,width:"90%",maxHeight:"80vh",overflowY:"auto",border:"0.5px solid var(--color-border-tertiary)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:500}}>Tabla de referencia de códigos</h3>
+              <button onClick={()=>setShowRef(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"var(--color-text-tertiary)"}}>✕</button>
+            </div>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>TIPO DE LICITACIÓN</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:20}}>
+              <thead>
+                <tr style={{background:"var(--color-background-secondary)"}}>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)",width:"15%"}}>Código</th>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>Descripción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(TIPOS).map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#185FA5"}}>{k}</td>
+                    <td style={{padding:"7px 10px",fontSize:12}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>ESTADOS</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:20}}>
+              <thead>
+                <tr style={{background:"var(--color-background-secondary)"}}>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)",width:"15%"}}>Código</th>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[["5","Publicada"],["6","Cerrada"],["7","Desierta"],["8","Adjudicada"],["18","Revocada"],["19","Suspendida"]].map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#6b7280"}}>{k}</td>
+                    <td style={{padding:"7px 10px"}}><Badge c={k}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>UNIDADES MONETARIAS</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <tbody>
+                {[["CLP","Peso Chileno"],["CLF","Unidad de Fomento (UF)"],["UTM","Unidad Tributaria Mensual"],["USD","Dólar Americano"],["EUR","Euro"]].map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#185FA5",width:"15%"}}>{k}</td>
+                    <td style={{padding:"7px 10px",fontSize:12}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <button onClick={()=>setShowRef(false)} style={{width:"100%",marginTop:16,padding:"9px",background:"#D52B1E",color:"white",border:"none",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer"}}>Cerrar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const MODES = [
+  { id: "activas",      label: "Activas hoy" },
+  { id: "fecha_estado", label: "Por fecha / estado" },
+  { id: "codigo",       label: "Por código" },
+  { id: "organismo",    label: "Por organismo" },
+  { id: "proveedor",    label: "Por proveedor" },
+];
+
+export default function App() {
+  const [ticket, setTicket] = useState("");
+  const [mode, setMode] = useState("activas");
+  const [params, setParams] = useState({
+    codigo: "", fecha: todayLocal(), estado: "todos",
+    organismo: "", proveedor: "", fechaOrg: todayLocal(), fechaProv: todayLocal(),
+  });
+  const [filter, setFilter] = useState({ q: "", tipo: "", estado: "", montoMin: "", montoMax: "" });
+  const [data, setData] = useState(null);
+  const [detailData, setDetailData] = useState(null); // full detail by código
+  const [loading, setLoading] = useState(false);
+  const [loadingDetail, setLoadingDetail] = useState(false);
+  const [error, setError] = useState("");
+  const [selected, setSelected] = useState(null);
+  const [page, setPage] = useState(1);
+  const PER = 20;
+
+  // Persist ticket via storage
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await window.storage.get("cc_ticket");
+        if (r?.value) setTicket(r.value);
+      } catch {}
+    })();
+  }, []);
+
+  const saveTicket = useCallback(async (v) => {
+    setTicket(v);
+    try { await window.storage.set("cc_ticket", v); } catch {}
+  }, []);
+
+  function buildUrl() {
+    const t = encodeURIComponent(ticket.trim());
+    switch (mode) {
+      case "activas":      return `${BASE}?estado=activas&ticket=${t}`;
+      case "codigo":       return `${BASE}?codigo=${encodeURIComponent(params.codigo.trim())}&ticket=${t}`;
+      case "fecha_estado": {
+        const f = params.fecha ? `&fecha=${toApiDate(params.fecha)}` : "";
+        const e = params.estado !== "todos" ? `&estado=${params.estado}` : `&estado=todos`;
+        return `${BASE}?ticket=${t}${f}${e}`;
+      }
+      case "organismo":    return `${BASE}?fecha=${toApiDate(params.fechaOrg)}&CodigoOrganismo=${encodeURIComponent(params.organismo)}&ticket=${t}`;
+      case "proveedor":    return `${BASE}?fecha=${toApiDate(params.fechaProv)}&CodigoProveedor=${encodeURIComponent(params.proveedor)}&ticket=${t}`;
+      default:             return `${BASE}?ticket=${t}`;
+    }
+  }
+
+  async function search() {
+    if (!ticket.trim()) { setError("Ingresa tu ticket de API."); return; }
+    setLoading(true); setError(""); setData(null); setSelected(null); setDetailData(null); setPage(1);
+    try {
+      const res = await fetch(buildUrl());
+      if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
+      const json = await res.json();
+      setData(json);
+    } catch (e) {
+      const isCors = e.message.includes("Failed to fetch") || e.message.includes("NetworkError") || e.message.includes("CORS");
+      setError(isCors
+        ? "Error de conexión o CORS. La API es pública pero puede requerir ser consumida desde un servidor (Node.js/Python) en producción. Si estás en desarrollo local, considera usar un proxy CORS."
+        : `Error: ${e.message}`
+      );
+    } finally { setLoading(false); }
+  }
+
+  async function fetchDetail(codigo) {
+    if (!ticket.trim() || !codigo) return;
+    setLoadingDetail(true); setDetailData(null);
+    try {
+      const t = encodeURIComponent(ticket.trim());
+      const res = await fetch(`${BASE}?codigo=${encodeURIComponent(codigo)}&ticket=${t}`);
+      if (!res.ok) throw new Error(`Error HTTP ${res.status}`);
+      const json = await res.json();
+      if (json.Listado?.[0]) setDetailData(json.Listado[0]);
+    } catch {} finally { setLoadingDetail(false); }
+  }
+
+  function selectRow(l) {
+    if (selected?.CodigoExterno === l.CodigoExterno) {
+      setSelected(null); setDetailData(null);
+    } else {
+      setSelected(l);
+      setDetailData(null);
+      fetchDetail(l.CodigoExterno);
+    }
+  }
+
+  const filtered = useMemo(() => {
+    if (!data?.Listado) return [];
+    return data.Listado.filter(l => {
+      const q = filter.q.toLowerCase();
+      if (q && !l.Nombre?.toLowerCase().includes(q) && !l.CodigoExterno?.toLowerCase().includes(q) && !l.Organismo?.Nombre?.toLowerCase().includes(q)) return false;
+      if (filter.tipo && l.Tipo !== filter.tipo) return false;
+      if (filter.estado && String(l.CodigoEstado) !== filter.estado) return false;
+      if (filter.montoMin && (l.MontoEstimado || 0) < Number(filter.montoMin)) return false;
+      if (filter.montoMax && Number(filter.montoMax) > 0 && (l.MontoEstimado || 0) > Number(filter.montoMax)) return false;
+      return true;
+    });
+  }, [data, filter]);
+
+  const totalPages = Math.ceil(filtered.length / PER);
+  const pageItems = filtered.slice((page - 1) * PER, page * PER);
+
+  const stateCounts = useMemo(() => {
+    if (!data?.Listado) return {};
+    return data.Listado.reduce((acc, l) => {
+      const k = String(l.CodigoEstado);
+      acc[k] = (acc[k] || 0) + 1;
+      return acc;
+    }, {});
+  }, [data]);
+
+  function exportCSV() {
+    const headers = ["Código", "Nombre", "Estado", "Tipo", "Monto", "Moneda", "Organismo", "Publicación", "Cierre"];
+    const rows = filtered.map(l => [
+      l.CodigoExterno,
+      `"${(l.Nombre || "").replace(/"/g, '""')}"`,
+      ESTADOS[String(l.CodigoEstado)]?.label || l.CodigoEstado,
+      l.Tipo,
+      l.MontoEstimado || 0,
+      l.UnidadMonedaEstimadaDescripcion || "CLP",
+      `"${(l.Organismo?.Nombre || "").replace(/"/g, '""')}"`,
+      fmtDate(l.FechaPublicacion),
+      fmtDate(l.FechaCierre),
+    ]);
+    const csv = [headers, ...rows].map(r => r.join(",")).join("\n");
+    const a = Object.assign(document.createElement("a"), {
+      href: URL.createObjectURL(new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" })),
+      download: `licitaciones_${new Date().toISOString().split("T")[0]}.csv`,
+    });
+    a.click();
+  }
+
+  function clearFilters() {
+    setFilter({ q: "", tipo: "", estado: "", montoMin: "", montoMax: "" });
+    setPage(1);
+  }
+
+  const hasFilters = filter.q || filter.tipo || filter.estado || filter.montoMin || filter.montoMax;
+  const activeDetail = detailData || selected;
+
+  const s = {
+    card: { background: "var(--color-background-primary)", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", padding: "1rem 1.25rem" },
+    label: { fontSize: 10, fontWeight: 500, color: "var(--color-text-tertiary)", letterSpacing: "0.05em", marginBottom: 5, display: "block" },
+    tab: (active) => ({
+      padding: "5px 14px", fontSize: 12, borderRadius: 99, cursor: "pointer",
+      border: active ? "1.5px solid var(--color-border-primary)" : "0.5px solid var(--color-border-tertiary)",
+      background: active ? "var(--color-background-secondary)" : "transparent",
+      fontWeight: active ? 500 : 400, color: "var(--color-text-primary)",
+    }),
+  };
+
+  return (
+    <div style={{ fontFamily: "var(--font-sans)", color: "var(--color-text-primary)", paddingTop: "1rem", paddingBottom: "3rem" }}>
+
+      {/* ── Header ─────────────────────────────── */}
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: "1.5rem", gap: 8 }}>
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 3 }}>
+            <div style={{ display: "flex", gap: 2 }}>
+              <div style={{ width: 4, height: 24, background: "#003087", borderRadius: 2 }} />
+              <div style={{ width: 4, height: 24, background: "#FFFFFF", borderRadius: 2, border: "0.5px solid var(--color-border-tertiary)" }} />
+              <div style={{ width: 4, height: 24, background: "#D52B1E", borderRadius: 2 }} />
+            </div>
+            <h2 style={{ margin: 0, fontSize: 17, fontWeight: 500 }}>Explorador de Licitaciones</h2>
+            <span style={{ fontSize: 10, color: "var(--color-text-tertiary)", padding: "2px 8px", border: "0.5px solid var(--color-border-tertiary)", borderRadius: 99 }}>ChileCompra API v1</span>
+          </div>
+          <p style={{ margin: 0, fontSize: 12, color: "var(--color-text-secondary)" }}>Consulta, filtra y exporta licitaciones de Mercado Público en tiempo real</p>
+        </div>
+        <a href="https://api.mercadopublico.cl/modules/IniciarSesion.aspx" target="_blank"
+          style={{ fontSize: 11, color: "var(--color-text-info)", textDecoration: "none", whiteSpace: "nowrap", padding: "6px 12px", border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-md)" }}>
+          Obtener ticket ↗
+        </a>
+      </div>
+
+      {/* ── Ticket ─────────────────────────────── */}
+      <div style={{ ...s.card, marginBottom: "0.75rem" }}>
+        <label style={s.label}>TICKET DE API (se guarda automáticamente)</label>
+        <input value={ticket} onChange={e => saveTicket(e.target.value)}
+          placeholder="Ej: F8537A18-6766-4DEF-9E59-426B4FEE2844"
+          style={{ width: "100%", fontFamily: "var(--font-mono)", fontSize: 12, height: 34 }} />
+      </div>
+
+      {/* ── Mode + Params ──────────────────────── */}
+      <div style={{ ...s.card, marginBottom: "0.75rem" }}>
+        <label style={s.label}>TIPO DE BÚSQUEDA</label>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: "0.75rem" }}>
+          {MODES.map(m => (
+            <button key={m.id} onClick={() => { setMode(m.id); setData(null); setSelected(null); setDetailData(null); }}
+              style={s.tab(mode === m.id)}>{m.label}</button>
+          ))}
+        </div>
+
+        {mode !== "activas" && (
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8, marginBottom: "0.75rem" }}>
+            {mode === "codigo" && (
+              <div>
+                <label style={s.label}>CÓDIGO DE LICITACIÓN</label>
+                <input value={params.codigo} onChange={e => setParams(p => ({ ...p, codigo: e.target.value }))}
+                  placeholder="Ej: 1509-5-L114" style={{ fontFamily: "var(--font-mono)", fontSize: 12, height: 34, width: "100%" }} />
+              </div>
+            )}
+            {mode === "fecha_estado" && (<>
+              <div>
+                <label style={s.label}>FECHA</label>
+                <input type="date" value={params.fecha} onChange={e => setParams(p => ({ ...p, fecha: e.target.value }))} style={{ height: 34, width: "100%" }} />
+              </div>
+              <div>
+                <label style={s.label}>ESTADO</label>
+                <select value={params.estado} onChange={e => setParams(p => ({ ...p, estado: e.target.value }))} style={{ height: 34, width: "100%", fontSize: 12 }}>
+                  <option value="todos">Todos los estados</option>
+                  <option value="activas">Activas</option>
+                  <option value="publicada">Publicada</option>
+                  <option value="cerrada">Cerrada</option>
+                  <option value="desierta">Desierta</option>
+                  <option value="adjudicada">Adjudicada</option>
+                  <option value="revocada">Revocada</option>
+                  <option value="suspendida">Suspendida</option>
+                </select>
+              </div>
+            </>)}
+            {mode === "organismo" && (<>
+              <div>
+                <label style={s.label}>CÓDIGO ORGANISMO</label>
+                <input value={params.organismo} onChange={e => setParams(p => ({ ...p, organismo: e.target.value }))}
+                  placeholder="Ej: 694" style={{ height: 34, width: "100%", fontFamily: "var(--font-mono)", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={s.label}>FECHA</label>
+                <input type="date" value={params.fechaOrg} onChange={e => setParams(p => ({ ...p, fechaOrg: e.target.value }))} style={{ height: 34, width: "100%" }} />
+              </div>
+            </>)}
+            {mode === "proveedor" && (<>
+              <div>
+                <label style={s.label}>CÓDIGO PROVEEDOR</label>
+                <input value={params.proveedor} onChange={e => setParams(p => ({ ...p, proveedor: e.target.value }))}
+                  placeholder="Ej: 17793" style={{ height: 34, width: "100%", fontFamily: "var(--font-mono)", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={s.label}>FECHA</label>
+                <input type="date" value={params.fechaProv} onChange={e => setParams(p => ({ ...p, fechaProv: e.target.value }))} style={{ height: 34, width: "100%" }} />
+              </div>
+            </>)}
+          </div>
+        )}
+
+        <button onClick={search} disabled={loading}
+          style={{ width: "100%", height: 36, background: loading ? "#aaa" : "#D52B1E", color: "white", border: "none", borderRadius: "var(--border-radius-md)", cursor: loading ? "default" : "pointer", fontSize: 13, fontWeight: 500 }}>
+          {loading ? "Consultando API de Mercado Público..." : "🔍  Buscar licitaciones"}
+        </button>
+      </div>
+
+      {/* ── Error ──────────────────────────────── */}
+      {error && (
+        <div style={{ padding: "12px 16px", background: "var(--color-background-danger)", border: "0.5px solid var(--color-border-danger)", borderRadius: "var(--border-radius-md)", marginBottom: "0.75rem", fontSize: 12, color: "var(--color-text-danger)", lineHeight: 1.6 }}>
+          {error}
+        </div>
+      )}
+
+      {/* ── Results ────────────────────────────── */}
+      {data && (
+        <div>
+          {/* Metrics */}
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px, 1fr))", gap: 8, marginBottom: "0.75rem" }}>
+            {[
+              { label: "Total API", val: (data.Cantidad || 0).toLocaleString("es-CL") },
+              { label: "Filtradas", val: filtered.length.toLocaleString("es-CL") },
+              ...Object.entries(stateCounts).sort(([,a],[,b]) => b - a).slice(0, 4).map(([k, v]) => ({
+                label: ESTADOS[k]?.label || `Estado ${k}`,
+                val: v.toLocaleString("es-CL"),
+                dot: ESTADOS[k]?.color,
+              })),
+            ].map(({ label, val, dot }, i) => (
+              <div key={i} style={{ background: "var(--color-background-secondary)", borderRadius: "var(--border-radius-md)", padding: "0.65rem 0.85rem" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 2 }}>
+                  {dot && <span style={{ width: 6, height: 6, borderRadius: 99, background: dot, display: "inline-block", flexShrink: 0 }} />}
+                  <p style={{ margin: 0, fontSize: 10, color: "var(--color-text-secondary)" }}>{label}</p>
+                </div>
+                <p style={{ margin: 0, fontSize: 20, fontWeight: 500 }}>{val}</p>
+              </div>
+            ))}
+          </div>
+
+          {/* Filters bar */}
+          <div style={{ ...s.card, marginBottom: "0.75rem" }}>
+            <div style={{ display: "grid", gridTemplateColumns: "1fr auto auto auto auto auto auto", gap: 8, alignItems: "end" }}>
+              <div>
+                <label style={s.label}>BUSCAR EN RESULTADOS</label>
+                <input value={filter.q} onChange={e => { setFilter(f => ({ ...f, q: e.target.value })); setPage(1); }}
+                  placeholder="Nombre, código u organismo..." style={{ height: 32, width: "100%", fontSize: 12 }} />
+              </div>
+              <div>
+                <label style={s.label}>TIPO / RUBRO</label>
+                <select value={filter.tipo} onChange={e => { setFilter(f => ({ ...f, tipo: e.target.value })); setPage(1); }} style={{ height: 32, fontSize: 11, minWidth: 100 }}>
+                  <option value="">Todos</option>
+                  {Object.entries(TIPOS).map(([k, v]) => <option key={k} value={k}>{k}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={s.label}>ESTADO</label>
+                <select value={filter.estado} onChange={e => { setFilter(f => ({ ...f, estado: e.target.value })); setPage(1); }} style={{ height: 32, fontSize: 11, minWidth: 110 }}>
+                  <option value="">Todos</option>
+                  {Object.entries(ESTADOS).map(([k, v]) => <option key={k} value={k}>{v.label}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={s.label}>MONTO MÍN</label>
+                <input type="number" value={filter.montoMin} onChange={e => { setFilter(f => ({ ...f, montoMin: e.target.value })); setPage(1); }}
+                  placeholder="0" style={{ height: 32, fontSize: 11, width: 100 }} />
+              </div>
+              <div>
+                <label style={s.label}>MONTO MÁX</label>
+                <input type="number" value={filter.montoMax} onChange={e => { setFilter(f => ({ ...f, montoMax: e.target.value })); setPage(1); }}
+                  placeholder="∞" style={{ height: 32, fontSize: 11, width: 100 }} />
+              </div>
+              {hasFilters && (
+                <button onClick={clearFilters} style={{ height: 32, padding: "0 12px", fontSize: 11, border: "0.5px solid var(--color-border-secondary)", borderRadius: "var(--border-radius-md)", background: "transparent", cursor: "pointer", color: "var(--color-text-secondary)", whiteSpace: "nowrap" }}>
+                  Limpiar
+                </button>
+              )}
+              <button onClick={exportCSV} style={{ height: 32, padding: "0 12px", fontSize: 11, border: "0.5px solid var(--color-border-secondary)", borderRadius: "var(--border-radius-md)", background: "transparent", cursor: "pointer", color: "var(--color-text-primary)", whiteSpace: "nowrap" }}>
+                ↓ CSV
+              </button>
+            </div>
+          </div>
+
+          {/* Two-panel layout */}
+          <div style={{ display: "grid", gridTemplateColumns: selected ? "1fr 340px" : "1fr", gap: "0.75rem", alignItems: "start" }}>
+
+            {/* Table */}
+            <div style={{ border: "0.5px solid var(--color-border-tertiary)", borderRadius: "var(--border-radius-lg)", overflow: "hidden" }}>
+              <div style={{ overflowX: "auto" }}>
+                <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 11, tableLayout: "fixed", minWidth: selected ? 400 : 600 }}>
+                  <colgroup>
+                    <col style={{ width: selected ? "20%" : "14%" }} />
+                    <col style={{ width: selected ? "40%" : "36%" }} />
+                    <col style={{ width: "13%" }} />
+                    {!selected && <col style={{ width: "7%" }} />}
+                    <col style={{ width: selected ? "27%" : "18%" }} />
+                    {!selected && <col style={{ width: "12%" }} />}
+                  </colgroup>
+                  <thead>
+                    <tr style={{ background: "var(--color-background-secondary)" }}>
+                      {["Código", "Nombre", "Estado", ...(!selected ? ["Tipo"] : []), "Monto", ...(!selected ? ["Organismo"] : [])].map(h => (
+                        <th key={h} style={{ padding: "9px 10px", textAlign: "left", fontWeight: 500, fontSize: 10, color: "var(--color-text-secondary)", borderBottom: "0.5px solid var(--color-border-tertiary)", letterSpacing: "0.03em" }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {pageItems.length === 0 && (
+                      <tr><td colSpan={7} style={{ padding: "2.5rem", textAlign: "center", color: "var(--color-text-tertiary)", fontSize: 12 }}>
+                        {data.Cantidad === 0 ? "La API no retornó resultados para esta consulta." : "Sin resultados con los filtros actuales."}
+                      </td></tr>
+                    )}
+                    {pageItems.map((l, i) => {
+                      const isSelected = selected?.CodigoExterno === l.CodigoExterno;
+                      return (
+                        <tr key={l.CodigoExterno || i} onClick={() => selectRow(l)}
+                          style={{ borderBottom: "0.5px solid var(--color-border-tertiary)", cursor: "pointer", background: isSelected ? "var(--color-background-secondary)" : "transparent" }}
+                          onMouseEnter={e => { if (!isSelected) e.currentTarget.style.background = "var(--color-background-tertiary)"; }}
+                          onMouseLeave={e => { if (!isSelected) e.currentTarget.style.background = "transparent"; }}>
+                          <td style={{ padding: "9px 10px", fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--color-text-tertiary)" }}>{l.CodigoExterno}</td>
+                          <td style={{ padding: "9px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={l.Nombre}>{l.Nombre}</td>
+                          <td style={{ padding: "9px 10px" }}><Badge codigo={l.CodigoEstado} /></td>
+                          {!selected && <td style={{ padding: "9px 10px", fontFamily: "var(--font-mono)", fontSize: 9, color: "var(--color-text-secondary)" }}>{l.Tipo}</td>}
+                          <td style={{ padding: "9px 10px", textAlign: "right", fontVariantNumeric: "tabular-nums", whiteSpace: "nowrap" }}>
+                            {l.MontoEstimado > 0
+                              ? <span style={{ fontSize: 10 }}>{fmtMonto(l.MontoEstimado, l.UnidadMonedaEstimadaDescripcion)}</span>
+                              : <span style={{ color: "var(--color-text-tertiary)" }}>—</span>}
+                          </td>
+                          {!selected && <td style={{ padding: "9px 10px", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--color-text-secondary)" }}>{l.Organismo?.Nombre}</td>}
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div style={{ display: "flex", gap: 8, justifyContent: "center", padding: "10px", borderTop: "0.5px solid var(--color-border-tertiary)", alignItems: "center" }}>
+                  <button onClick={() => setPage(1)} disabled={page === 1} style={{ padding: "4px 10px", fontSize: 11 }}>«</button>
+                  <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1} style={{ padding: "4px 10px", fontSize: 11 }}>‹</button>
+                  <span style={{ fontSize: 11, color: "var(--color-text-secondary)", minWidth: 80, textAlign: "center" }}>
+                    {page} / {totalPages} · {filtered.length.toLocaleString("es-CL")} resultados
+                  </span>
+                  <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ padding: "4px 10px", fontSize: 11 }}>›</button>
+                  <button onClick={() => setPage(totalPages)} disabled={page === totalPages} style={{ padding: "4px 10px", fontSize: 11 }}>»</button>
+                </div>
+              )}
+            </div>
+
+            {/* Detail Panel */}
+            {selected && (
+              <div style={{ ...s.card }}>
+                {/* Header */}
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: "0.75rem" }}>
+                  <Badge codigo={selected.CodigoEstado} />
+                  <button onClick={() => { setSelected(null); setDetailData(null); }}
+                    style={{ background: "none", border: "none", cursor: "pointer", color: "var(--color-text-tertiary)", padding: 0, fontSize: 14, lineHeight: 1 }}>✕</button>
+                </div>
+                <p style={{ margin: "0 0 4px", fontSize: 9, fontFamily: "var(--font-mono)", color: "var(--color-text-tertiary)" }}>{selected.CodigoExterno}</p>
+                <p style={{ margin: "0 0 1rem", fontSize: 13, fontWeight: 500, lineHeight: 1.4 }}>{selected.Nombre}</p>
+
+                {loadingDetail && <p style={{ fontSize: 11, color: "var(--color-text-tertiary)", margin: "0 0 0.75rem" }}>Cargando detalle completo...</p>}
+
+                {/* Fields */}
+                <div style={{ marginBottom: "0.75rem" }}>
+                  <Field label="Tipo" value={activeDetail?.Tipo ? `${activeDetail.Tipo} — ${TIPOS[activeDetail.Tipo] || activeDetail.Tipo}` : null} />
+                  <Field label="Organismo" value={activeDetail?.Organismo?.Nombre} />
+                  <Field label="Monto estimado" value={fmtMonto(activeDetail?.MontoEstimado, activeDetail?.UnidadMonedaEstimadaDescripcion)} />
+                  <Field label="Publicación" value={fmtDate(activeDetail?.FechaPublicacion)} />
+                  <Field label="Cierre recepción" value={fmtDate(activeDetail?.FechaCierre)} />
+                  <Field label="Adjudicación" value={fmtDate(activeDetail?.FechaAdjudicacion)} />
+                  <Field label="Región" value={activeDetail?.Regiones?.[0]?.NombreRegion || activeDetail?.RegionUnidad} />
+                  <Field label="Modalidad pago" value={activeDetail?.TiempoPago} />
+                  <Field label="Duración contrato" value={activeDetail?.TiempoEvaluacionCodigo} />
+                  {activeDetail?.CodigoEstado === "8" && activeDetail?.Adjudicacion && (
+                    <>
+                      <Field label="Proveedor adjudicado" value={activeDetail.Adjudicacion?.Proveedor?.Nombre} />
+                      <Field label="Monto adjudicado" value={fmtMonto(activeDetail.Adjudicacion?.MontoTotal, activeDetail.UnidadMonedaEstimadaDescripcion)} mono />
+                    </>
+                  )}
+                </div>
+
+                {/* Descripción */}
+                {activeDetail?.Descripcion && (
+                  <div style={{ marginBottom: "0.75rem" }}>
+                    <p style={{ fontSize: 9, fontWeight: 500, color: "var(--color-text-tertiary)", letterSpacing: "0.05em", margin: "0 0 5px" }}>DESCRIPCIÓN</p>
+                    <p style={{ fontSize: 11, lineHeight: 1.6, margin: 0, color: "var(--color-text-secondary)", maxHeight: 100, overflowY: "auto" }}>{activeDetail.Descripcion}</p>
+                  </div>
+                )}
+
+                {/* Ítems */}
+                {activeDetail?.Items?.Listado?.length > 0 && (
+                  <div style={{ marginBottom: "0.75rem" }}>
+                    <p style={{ fontSize: 9, fontWeight: 500, color: "var(--color-text-tertiary)", letterSpacing: "0.05em", margin: "0 0 5px" }}>
+                      ÍTEMS ({activeDetail.Items.Listado.length})
+                    </p>
+                    <div style={{ maxHeight: 140, overflowY: "auto", borderRadius: "var(--border-radius-md)", border: "0.5px solid var(--color-border-tertiary)" }}>
+                      {activeDetail.Items.Listado.map((item, i) => (
+                        <div key={i} style={{ padding: "7px 10px", borderBottom: i < activeDetail.Items.Listado.length - 1 ? "0.5px solid var(--color-border-tertiary)" : "none", fontSize: 11 }}>
+                          <p style={{ margin: 0, fontWeight: 500, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{item.NombreProducto || item.Nombre}</p>
+                          <p style={{ margin: 0, color: "var(--color-text-secondary)", fontSize: 10 }}>
+                            Qty: {item.Cantidad} {item.UnidadMedida} · Cat: {item.CodigoCategoria}
+                          </p>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Adjudicatarios */}
+                {activeDetail?.Adjudicacion?.Adjudicatarios?.length > 0 && (
+                  <div style={{ marginBottom: "0.75rem" }}>
+                    <p style={{ fontSize: 9, fontWeight: 500, color: "var(--color-text-tertiary)", letterSpacing: "0.05em", margin: "0 0 5px" }}>ADJUDICATARIOS</p>
+                    {activeDetail.Adjudicacion.Adjudicatarios.slice(0, 3).map((adj, i) => (
+                      <div key={i} style={{ padding: "6px 0", borderBottom: "0.5px solid var(--color-border-tertiary)", fontSize: 11 }}>
+                        <p style={{ margin: 0, fontWeight: 500 }}>{adj.NombreProveedor || adj.Nombre}</p>
+                        {adj.MontoTotal && <p style={{ margin: 0, fontSize: 10, color: "var(--color-text-secondary)", fontFamily: "var(--font-mono)" }}>{fmtMonto(adj.MontoTotal, activeDetail.UnidadMonedaEstimadaDescripcion)}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* CTA */}
+                <a href={`https://www.mercadopublico.cl/Procurement/Modules/RFB/DetailsAcquisition.aspx?qs=WgLuBLRjJcBU5dIg43fZAQ==&idlicitacion=${selected.CodigoExterno}`}
+                  target="_blank"
+                  style={{ display: "block", textAlign: "center", padding: "9px", background: "#D52B1E", color: "white", borderRadius: "var(--border-radius-md)", fontSize: 11, fontWeight: 500, textDecoration: "none" }}>
+                  Ver ficha completa en Mercado Público ↗
+                </a>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Empty state */}
+      {!data && !loading && !error && (
+        <div style={{ textAlign: "center", padding: "3rem 1rem", color: "var(--color-text-tertiary)" }}>
+          <p style={{ fontSize: 13, margin: 0 }}>Ingresa tu ticket y selecciona el tipo de búsqueda para comenzar</p>
+          <p style={{ fontSize: 11, marginTop: 8 }}>Datos públicos de <a href="https://www.mercadopublico.cl" target="_blank" style={{ color: "var(--color-text-info)" }}>mercadopublico.cl</a></p>
+        </div>
+      )}
+
+      {showRef&&(
+        <div style={{position:"fixed",top:0,left:0,width:"100vw",height:"100vh",background:"rgba(0,0,0,0.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={()=>setShowRef(false)}>
+          <div style={{background:"var(--color-background-primary)",borderRadius:12,padding:"24px",maxWidth:680,width:"90%",maxHeight:"80vh",overflowY:"auto",border:"0.5px solid var(--color-border-tertiary)"}} onClick={e=>e.stopPropagation()}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+              <h3 style={{margin:0,fontSize:15,fontWeight:500}}>Tabla de referencia de códigos</h3>
+              <button onClick={()=>setShowRef(false)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"var(--color-text-tertiary)"}}>✕</button>
+            </div>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>TIPO DE LICITACIÓN</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:20}}>
+              <thead>
+                <tr style={{background:"var(--color-background-secondary)"}}>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)",width:"15%"}}>Código</th>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>Descripción</th>
+                </tr>
+              </thead>
+              <tbody>
+                {Object.entries(TIPOS).map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#185FA5"}}>{k}</td>
+                    <td style={{padding:"7px 10px",fontSize:12}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>ESTADOS</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12,marginBottom:20}}>
+              <thead>
+                <tr style={{background:"var(--color-background-secondary)"}}>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)",width:"15%"}}>Código</th>
+                  <th style={{padding:"7px 10px",textAlign:"left",fontWeight:600,fontSize:10,color:"var(--color-text-secondary)",borderBottom:"0.5px solid var(--color-border-tertiary)"}}>Estado</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[["5","Publicada"],["6","Cerrada"],["7","Desierta"],["8","Adjudicada"],["18","Revocada"],["19","Suspendida"]].map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#6b7280"}}>{k}</td>
+                    <td style={{padding:"7px 10px"}}><Badge c={k}/></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <p style={{fontSize:11,fontWeight:600,color:"var(--color-text-tertiary)",letterSpacing:"0.06em",margin:"0 0 8px"}}>UNIDADES MONETARIAS</p>
+            <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+              <tbody>
+                {[["CLP","Peso Chileno"],["CLF","Unidad de Fomento (UF)"],["UTM","Unidad Tributaria Mensual"],["USD","Dólar Americano"],["EUR","Euro"]].map(([k,v])=>(
+                  <tr key={k} style={{borderBottom:"0.5px solid var(--color-border-tertiary)"}}>
+                    <td style={{padding:"7px 10px",fontFamily:"var(--font-mono)",fontSize:11,fontWeight:600,color:"#185FA5",width:"15%"}}>{k}</td>
+                    <td style={{padding:"7px 10px",fontSize:12}}>{v}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+
+            <button onClick={()=>setShowRef(false)} style={{width:"100%",marginTop:16,padding:"9px",background:"#D52B1E",color:"white",border:"none",borderRadius:6,fontSize:12,fontWeight:500,cursor:"pointer"}}>Cerrar</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
