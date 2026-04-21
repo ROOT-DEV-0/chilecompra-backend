@@ -52,7 +52,10 @@ function admin(req, res, next) {
 // ── SSE ───────────────────────────────────────────────────────────
 const clients = new Map()
 
-app.get('/api/events', auth, (req, res) => {
+app.get('/api/events', (req, res) => {
+  const tk = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token || ''
+  if (!tk) return res.status(401).end()
+  try { req.user = jwt.verify(tk, JWT_SECRET) } catch { return res.status(401).end() }
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
