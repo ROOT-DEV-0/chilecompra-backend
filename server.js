@@ -53,9 +53,12 @@ function admin(req, res, next) {
 const clients = new Map()
 
 app.get('/api/events', (req, res) => {
-  const tk = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token || ''
-  if (!tk) return res.status(401).end()
-  try { req.user = jwt.verify(tk, JWT_SECRET) } catch { return res.status(401).end() }
+  // SSE publico - auth opcional para filtrar por usuario
+  try {
+    const tk = (req.headers.authorization || '').replace('Bearer ', '') || req.query.token || ''
+    if (tk) req.user = jwt.verify(tk, JWT_SECRET)
+  } catch {}
+  if (!req.user) req.user = { id: 'anonymous', role: 'user' }
   res.setHeader('Content-Type', 'text/event-stream')
   res.setHeader('Cache-Control', 'no-cache')
   res.setHeader('Connection', 'keep-alive')
