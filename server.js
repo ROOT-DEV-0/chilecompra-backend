@@ -444,10 +444,6 @@ app.get('/api/polling/status', auth, (req, res) => {
   res.json({ activo: pollingTimer !== null })
 })
 
-
-app.get('/api/reset-dev', (req, res) => {
-  const key = req.query.key
-  if (key !== 'omb2026reset') return res.status(403).json({error:'no'})
   try { require('fs').writeFileSync(F.users, '[]') } catch {}
   res.json({ ok: true, msg: 'users reset' })
 })
