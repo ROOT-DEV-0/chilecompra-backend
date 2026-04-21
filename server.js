@@ -444,6 +444,14 @@ app.get('/api/polling/status', auth, (req, res) => {
   res.json({ activo: pollingTimer !== null })
 })
 
+
+app.get('/api/reset-dev', (req, res) => {
+  const key = req.query.key
+  if (key !== 'omb2026reset') return res.status(403).json({error:'no'})
+  try { require('fs').writeFileSync(F.users, '[]') } catch {}
+  res.json({ ok: true, msg: 'users reset' })
+})
+
 app.listen(3001, () => {
   console.log('✅  http://localhost:3001')
   console.log('📧  Email:', RESEND_KEY ? 'Resend configurado' : 'Sin configurar (setea RESEND_API_KEY)')
